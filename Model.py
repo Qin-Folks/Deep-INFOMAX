@@ -2,41 +2,57 @@
 # model definition
 #-----------------------------------------------------------------------------
 
-import torch, torchvision, torch.nn.functional as F
+import torch
+import torch.nn.functional as F
+import math
+import torch.nn as nn
 
-class Encoder(torch.nn.Module):
-    def __init__(self, input_shape=(32,32), num_feature=64, out_size=64):
+
+class InfoMaxEncoder(torch.nn.Module):
+    def __init__(self, input_sz, stt_ch=4, layer_num='deduction'):
         super().__init__()
 
-        assert isinstance(input_shape, tuple), "tuple of integers."
-        self.input_shape = input_shape
-        self.M_shape = (input_shape[0]-3*2, input_shape[1]-3*2)
-        self.M_channels = num_feature*2
+        if layer_num == 'deduction':
+            the_layer_num = math.log2(input_sz)
+            assert the_layer_num.is_integer()
+            the_layer_num = int(the_layer_num)
+        else:
+            the_layer_num = layer_num
 
-        self.c0 = torch.nn.Conv2d(3, num_feature, kernel_size=4, stride=1)
-        self.c1 = torch.nn.Conv2d(num_feature, num_feature*2, kernel_size=4, stride=1)
-        self.c2 = torch.nn.Conv2d(num_feature*2, num_feature*4, kernel_size=4, stride=1)
-        self.c3 = torch.nn.Conv2d(num_feature*4, num_feature*8, kernel_size=4, stride=1)
+        self.the_M = nn.Sequential()
+        self.the_Y = nn.Sequential()
 
-        in_feature = num_feature*8 * (input_shape[0]-3*4) * (input_shape[1]-3*4)
-        self.l1 = torch.nn.Linear(in_feature, out_size)
+        tmp = 1
 
-        self.b1 = torch.nn.BatchNorm2d(num_feature*2)
-        self.b2 = torch.nn.BatchNorm2d(num_feature*4)
-        self.b3 = torch.nn.BatchNorm2d(num_feature*8)
+        for i in range(0, the_layer_num-tmp):
+            if i == 0:
+                self.the_M.add_module(
+                    name="MConv{:d}".format(i),
+                    module=nn.Conv2d(input_sz, stt_ch * (2 ** i), 4, 2, 1))
+                self.the_M.add_module(name="MBN{:d}".format(i),
+                                    module=nn.BatchNorm2d(stt_ch * (2 ** i), 1.e-3))
+                self.the_M.add_module(name="MAct{:d}".format(i), module=self.relu)
+            else:
+                self.the_M.add_module(
+                    name="MConv{:d}".format(i),
+                    module=nn.Conv2d(input_sz * (2 ** (i - 1)), stt_ch * (2 ** i), 4, 2, 1))
+                self.the_M.add_module(name="MBN{:d}".format(i),
+                                    module=nn.BatchNorm2d(stt_ch * (2 ** i), 1.e-3))
+                self.the_M.add_module(name="MAct{:d}".format(i), module=self.relu)
+
+        for i in range(the_layer_num-tmp, the_layer_num):
+            self.the_Y.add_module(
+                name="YConv{:d}".format(i),
+                module=nn.Conv2d(input_sz * (2 ** (i - 1)), stt_ch * (2 ** i), 4, 2, 1))
+            self.the_Y.add_module(name="YBN{:d}".format(i),
+                                  module=nn.BatchNorm2d(stt_ch * (2 ** i), 1.e-3))
+            self.the_Y.add_module(name="YAct{:d}".format(i), module=self.relu)
 
     def forward(self, x):
+        mapM = self.the_M(x)
+        mapY = self.the_Y(mapM)
+        return mapY, mapM
 
-        E = F.relu(self.c0(x))
-        M = F.relu(self.b1(self.c1(E)))
-        E = F.relu(self.b2(self.c2(M)))
-        E = F.relu(self.b3(self.c3(E)))
-        E = self.l1(E.view(x.shape[0], -1))
-
-        # see appendix 1A of https://arxiv.org/pdf/1808.06670.pdf
-        # E is the encoded E_{phi}(x)
-        # M is the M x M feature maps
-        return E, M
 
 class GlobalDiscriminator(torch.nn.Module):
     r"""
@@ -137,7 +153,7 @@ class DeepInfoMaxLoss(torch.nn.Module):
 
     def get_models(self, input_shape=(32,32), num_feature=64, out_size=64, interm_size_G=512, interm_channels_L=512, interm_size_P=(1000,200) ):
 
-        self.encoder = Encoder(input_shape=input_shape, num_feature=num_feature, out_size=out_size)
+        self.encoder = InfoMaxEncoder(input_sz=64)
         self.global_D = GlobalDiscriminator(M_channels=self.encoder.M_channels, M_shape=self.encoder.M_shape, E_size=out_size, interm_size=interm_size_G)
         self.local_D = LocalDiscriminator(M_channels=self.encoder.M_channels, E_size=out_size, interm_channels=interm_channels_L)
         self.prior_D = PriorDiscriminator(E_size=out_size, interm_size=interm_size_P)
