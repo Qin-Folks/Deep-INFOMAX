@@ -49,8 +49,11 @@ if __name__ == "__main__":
             data = data.to(device)
 
             Y, M = dim.encoder(data)
-        #     # shuffle batch to pair each element with another
-        #     M_fake = torch.cat((M[1:], M[0].unsqueeze(0)), dim=0)
+
+            # shuffle batch to pair each element with another
+            M_fake = torch.cat((M[1:], M[0].unsqueeze(0)), dim=0)
+            print('m fake: ', M_fake.shape)
+
         #     loss = dim(Y, M, M_fake)
         #     Batch.set_description(f"[{epoch:>3d}/{num_epochs:<3d}]Loss/Train: {loss.item():1.5e}")
         #     dim.zero_grad()
